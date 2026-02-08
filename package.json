@@ -2,7 +2,7 @@
   "name": "preview-engine-ultimate",
   "version": "1.0.0",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc --skipLibCheck",
     "start": "node dist/server.js",
     "dev": "nodemon src/server.ts"
   },
@@ -19,7 +19,6 @@
     "@types/node": "^20.12.12",
     "@types/cors": "^2.8.17",
     "@types/uuid": "^9.0.7",
-    "@types/http-proxy-middleware": "^2.0.0",
     "typescript": "^5.4.5",
     "nodemon": "^3.1.0",
     "ts-node": "^10.9.2"
