@@ -1,0 +1,25 @@
+{
+  "name": "preview-engine-ultimate",
+  "version": "1.0.0",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "dev": "nodemon src/server.ts"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "ioredis": "^5.3.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "uuid": "^9.0.1",
+    "http-proxy-middleware": "^2.0.6"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.12.12",
+    "@types/cors": "^2.8.17",
+    "typescript": "^5.4.5",
+    "nodemon": "^3.1.0",
+    "ts-node": "^10.9.2"
+  }
+}
