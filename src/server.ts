@@ -3,17 +3,70 @@ import cors from 'cors';
 import { v4 as uuidv4 } from 'uuid';
 import { createProxyMiddleware } from 'http-proxy-middleware';
 import { createServer } from 'http';
-import { createClient } from './redis-client';
 import { AppManager } from './app-manager';
 import { UserApp, PreviewSession } from './types';
 
 const app = express();
 const mainServer = createServer(app);
-const redis = createClient();
 const appManager = new AppManager();
+
+// In-memory storage (replaces Redis)
+const memoryStore = {
+  apps: new Map<string, { data: UserApp, expiry: number }>(),
+  sessions: new Map<string, { data: PreviewSession, expiry: number }>(),
+  
+  // Auto-clean expired items
+  cleanup() {
+    const now = Date.now();
+    // Clean apps
+    for (const [key, item] of this.apps) {
+      if (now > item.expiry) this.apps.delete(key);
+    }
+    // Clean sessions
+    for (const [key, item] of this.sessions) {
+      if (now > item.expiry) this.sessions.delete(key);
+    }
+  },
+  
+  async setex(map: 'apps' | 'sessions', key: string, seconds: number, value: any) {
+    this.cleanup(); // Clean before adding
+    const store = map === 'apps' ? this.apps : this.sessions;
+    store.set(key, {
+      data: value,
+      expiry: Date.now() + (seconds * 1000)
+    });
+    return 'OK';
+  },
+  
+  async get(map: 'apps' | 'sessions', key: string): Promise<any> {
+    this.cleanup(); // Clean before reading
+    const store = map === 'apps' ? this.apps : this.sessions;
+    const item = store.get(key);
+    if (!item || Date.now() > item.expiry) {
+      store.delete(key);
+      return null;
+    }
+    return item.data;
+  }
+};
 
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
+
+// Root route
+app.get('/', (req, res) => {
+    res.send(`
+        <h1>🚀 Preview Engine API</h1>
+        <p>Your preview engine is running successfully!</p>
+        <ul>
+            <li><a href="/health">Health Check</a></li>
+            <li><a href="/api/example-frontend-code">Example Integration Code</a></li>
+            <li><strong>POST</strong> /api/preview/create - Create new preview</li>
+            <li><strong>GET</strong> /preview/{appId} - Access user's app</li>
+        </ul>
+        <p><strong>Status:</strong> Using in-memory storage (optimized for Render Free Tier)</p>
+    `);
+});
 
 // 1. Create REAL interactive app preview
 app.post('/api/preview/create', async (req, res) => {
@@ -36,10 +89,10 @@ app.post('/api/preview/create', async (req, res) => {
             expiresAt: Date.now() + 30 * 60 * 1000 // 30 minutes
         };
 
-        // Store in Redis
-        await redis.setex(`app:${appId}`, 1800, JSON.stringify(userApp));
+        // Store in memory (not Redis)
+        await memoryStore.setex('apps', `app:${appId}`, 1800, userApp);
         
-        // Get public URL (using Render's external URL or localhost)
+        // Get public URL
         const baseUrl = process.env.RENDER_EXTERNAL_URL || `http://localhost:${process.env.PORT || 10000}`;
         const previewUrl = `${baseUrl}/preview/${appId}`;
         
@@ -51,30 +104,35 @@ app.post('/api/preview/create', async (req, res) => {
             status: 'creating'
         };
         
-        await redis.setex(`session:${sessionId}`, 1800, JSON.stringify(session));
+        await memoryStore.setex('sessions', `session:${sessionId}`, 1800, session);
         
         // Create REAL app server
         try {
             await appManager.createAppServer(appId, userApp);
             session.status = 'live';
-            await redis.setex(`session:${sessionId}`, 1800, JSON.stringify(session));
+            await memoryStore.setex('sessions', `session:${sessionId}`, 1800, session);
         } catch (error) {
             console.error(`Failed to start app server for ${appId}:`, error);
             session.status = 'failed';
-            await redis.setex(`session:${sessionId}`, 300, JSON.stringify(session));
+            await memoryStore.setex('sessions', `session:${sessionId}`, 300, session);
             throw new Error('Failed to start app server');
         }
 
         console.log(`🎬 Created REAL app: ${appId} for user: ${userId}`);
         console.log(`🔗 Public URL: ${previewUrl}`);
+        console.log(`📊 Active apps: ${appManager.getActiveAppCount()}/${process.env.MAX_CONCURRENT_APPS || 5}`);
 
         res.json({
             success: true,
             sessionId,
             appId,
-            previewUrl, // REAL URL users can access
+            previewUrl,
             expiresAt: userApp.expiresAt,
-            message: 'Your real, interactive app is now live!'
+            message: 'Your real, interactive app is now live!',
+            stats: {
+                activeApps: appManager.getActiveAppCount(),
+                maxApps: parseInt(process.env.MAX_CONCURRENT_APPS || '5')
+            }
         });
 
     } catch (error) {
@@ -93,15 +151,14 @@ app.use('/preview/:appId', async (req, res, next) => {
     const port = appManager.getAppPort(appId);
     
     if (!port) {
-        // Try to load from Redis and restart
-        const appData = await redis.get(`app:${appId}`);
+        // Try to load from memory and restart
+        const appData = await memoryStore.get('apps', `app:${appId}`);
         if (!appData) {
             return res.status(404).json({ error: 'App not found or expired' });
         }
         
         try {
-            const userApp: UserApp = JSON.parse(appData);
-            await appManager.createAppServer(appId, userApp);
+            await appManager.createAppServer(appId, appData);
             // Redirect to retry
             return res.redirect(req.originalUrl);
         } catch (error) {
@@ -123,11 +180,10 @@ app.use('/preview/:appId', async (req, res, next) => {
 
 // 3. Check app status
 app.get('/api/preview/status/:sessionId', async (req, res) => {
-    const session = await redis.get(`session:${req.params.sessionId}`);
+    const session = await memoryStore.get('sessions', `session:${req.params.sessionId}`);
     if (!session) return res.status(404).json({ error: 'Session not found' });
     
-    const sessionData: PreviewSession = JSON.parse(session);
-    res.json(sessionData);
+    res.json(session);
 });
 
 // 4. Health check with stats
@@ -136,6 +192,8 @@ app.get('/health', (req, res) => {
         status: 'healthy', 
         activeApps: appManager.getActiveAppCount(),
         maxConcurrentApps: parseInt(process.env.MAX_CONCURRENT_APPS || '5'),
+        memoryApps: memoryStore.apps.size,
+        memorySessions: memoryStore.sessions.size,
         timestamp: new Date().toISOString() 
     });
 });
@@ -147,7 +205,7 @@ app.get('/api/example-frontend-code', (req, res) => {
         <pre><code>
 // When user clicks "Preview" in your AI builder:
 async function launchPreview(userGeneratedCode) {
-    const response = await fetch('https://your-api.onrender.com/api/preview/create', {
+    const response = await fetch('https://lovable-previewing.onrender.com/api/preview/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -165,9 +223,6 @@ async function launchPreview(userGeneratedCode) {
         const iframe = document.getElementById('preview-frame');
         iframe.src = result.previewUrl;
         
-        // OR open in new tab:
-        // window.open(result.previewUrl, '_blank');
-        
         console.log('🎉 User can now access REAL app at:', result.previewUrl);
     }
 }
@@ -184,15 +239,10 @@ mainServer.listen(PORT, () => {
     ✅ REAL interactive web apps (not screenshots)
     ✅ Users can sign in, click buttons, use forms
     ✅ Runs on Render Free Tier (Web Service)
+    ✅ In-memory storage (no Redis needed)
     ✅ Automatic cleanup after 30 minutes
     ✅ Max ${process.env.MAX_CONCURRENT_APPS || 5} concurrent apps
-    ✅ No Background Worker needed
-    
-    Endpoints:
-    POST   /api/preview/create    - Create new preview
-    GET    /preview/{appId}       - Access user's app
-    GET    /api/preview/status/{sessionId} - Check status
-    GET    /health                - Health check
+    ✅ Memory efficient
     
     Your AI builder will create REAL apps that users can fully interact with!
     `);
@@ -201,6 +251,5 @@ mainServer.listen(PORT, () => {
 // Graceful shutdown
 process.on('SIGTERM', () => {
     console.log('Shutting down gracefully...');
-    redis.quit();
     process.exit(0);
 });
