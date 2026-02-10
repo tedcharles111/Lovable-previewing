@@ -17,7 +17,6 @@ export class AppManager {
   }
 
   async createAppServer(appId: string, appData: UserApp): Promise<{ port: number; url: string }> {
-    // Prevent exceeding concurrency limits
     if (this.apps.size >= this.maxConcurrentApps) {
       const oldestAppId = this.findOldestAppId();
       if (oldestAppId) {
@@ -34,7 +33,6 @@ export class AppManager {
         <!-- SUPABASE CLIENT INJECTION -->
         <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
         <script>
-          // Create and expose the Supabase client for the user's app
           try {
             const supabase = window.supabase || supabase.createClient(
               '${this.supabaseUrl}',
@@ -45,9 +43,8 @@ export class AppManager {
           } catch (err) {
             console.error('Failed to initialize Supabase:', err);
           }
-        </script>
-        `
-        : '<!-- Supabase not configured -->';
+        </script>`
+        : '';
 
       res.send(`
         <!DOCTYPE html>
@@ -57,23 +54,25 @@ export class AppManager {
           <meta name="viewport" content="width=device-width, initial-scale=1.0">
           <title>${appData.id} - Live Preview</title>
           
-          <!-- COMMON LIBRARIES TO PREVENT COMMON ERRORS -->
-          <script src="https://code.jquery.com/jquery-3.6.4.min.js"></script>
+          <!-- FAVICON FIX -->
+          <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🚀</text></svg>">
+          
+          <!-- AUTO-LOAD JQUERY TO PREVENT $ ERRORS -->
+          <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
           <script>
-            // Create a safe $ alias even if jQuery fails
-            window.$ = window.$ || function(selector) {
-              console.warn('JQuery not properly loaded, using fallback');
-              return document.querySelector(selector);
-            };
+            // Fallback if jQuery fails
+            if (typeof window.$ === 'undefined') {
+              console.warn('JQuery failed to load, creating mock $');
+              window.$ = window.jQuery = function(selector) {
+                return document.querySelector(selector);
+              };
+            }
           </script>
           
-          <!-- USER'S CSS WITH ERROR HANDLING -->
-          <style id="user-css">
-            /* User CSS will be injected here */
-            ${appData.css || '/* No CSS provided */'}
-          </style>
-          
           ${supabaseInjection}
+          
+          <!-- USER'S CSS -->
+          <style>${appData.css || ''}</style>
           
           <!-- ERROR DISPLAY STYLES -->
           <style>
@@ -83,22 +82,22 @@ export class AppManager {
               left: 0;
               right: 0;
               bottom: 0;
-              background: rgba(0, 0, 0, 0.7);
+              background: rgba(0, 0, 0, 0.85);
               z-index: 10000;
               display: none;
               justify-content: center;
               align-items: center;
-              font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+              font-family: -apple-system, BlinkMacSystemFont, sans-serif;
             }
             
             .preview-error-container {
               background: white;
-              border-radius: 10px;
+              border-radius: 12px;
               padding: 30px;
               max-width: 800px;
               max-height: 80vh;
               overflow-y: auto;
-              box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+              box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
             }
             
             .preview-error-header {
@@ -114,7 +113,7 @@ export class AppManager {
             .preview-error-content {
               background: #f8f9fa;
               border: 1px solid #dadce0;
-              border-radius: 6px;
+              border-radius: 8px;
               padding: 20px;
               margin: 20px 0;
               font-family: 'Courier New', monospace;
@@ -149,12 +148,12 @@ export class AppManager {
               background: #0d62d9;
             }
             
-            .preview-error-try-again {
+            .preview-error-reload {
               background: #f1f3f4;
               color: #3c4043;
             }
             
-            .preview-error-try-again:hover {
+            .preview-error-reload:hover {
               background: #e8eaed;
             }
             
@@ -169,17 +168,24 @@ export class AppManager {
               font-size: 12px;
               z-index: 9999;
             }
+            
+            /* Fix for empty CSS */
+            body {
+              margin: 0;
+              min-height: 100vh;
+              font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            }
           </style>
         </head>
         <body>
-          <!-- ERROR OVERLAY (HIDDEN BY DEFAULT) -->
+          <!-- ERROR OVERLAY -->
           <div id="preview-error-overlay" class="preview-error-overlay">
             <div class="preview-error-container">
               <div class="preview-error-header">
                 <span>⚠️</span>
                 <span>Preview Error</span>
               </div>
-              <p>There was an error executing the generated code. This helps the LLM understand what needs to be fixed:</p>
+              <p>There was an error in the generated code. This helps the LLM understand what needs fixing:</p>
               
               <div class="preview-error-content" id="error-details">
                 <!-- Error details will appear here -->
@@ -192,7 +198,7 @@ export class AppManager {
                 <button class="preview-error-button preview-error-dismiss" onclick="document.getElementById('preview-error-overlay').style.display='none'">
                   Dismiss Error
                 </button>
-                <button class="preview-error-button preview-error-try-again" onclick="window.location.reload()">
+                <button class="preview-error-button preview-error-reload" onclick="window.location.reload()">
                   Reload Preview
                 </button>
               </div>
@@ -201,7 +207,7 @@ export class AppManager {
           
           <!-- USER'S HTML -->
           <div id="user-app-container">
-            ${appData.html || '<p>No HTML content provided.</p>'}
+            ${appData.html || '<div style="padding: 40px; text-align: center; color: #666;"><p>No HTML content provided.</p></div>'}
           </div>
           
           <!-- WATERMARK -->
@@ -209,111 +215,130 @@ export class AppManager {
             Preview Engine | ${appData.id}
           </div>
           
-          <!-- USER'S JAVASCRIPT WITH COMPREHENSIVE ERROR HANDLING -->
+          <!-- ENHANCED ERROR HANDLING SCRIPT -->
           <script>
-            // Global error handler to catch all unhandled errors
-            window.addEventListener('error', function(event) {
-              event.preventDefault();
-              
-              const errorDetails = \`
-Error: \${event.error?.message || event.message}
-Type: \${event.error?.constructor?.name || 'Unknown'}
-File: \${event.filename || 'Unknown'}
-Line: \${event.lineno || 'Unknown'}
-Column: \${event.colno || 'Unknown'}
-Stack Trace:
-\${event.error?.stack || 'No stack trace available'}
-              \`.trim();
-              
-              document.getElementById('error-details').textContent = errorDetails;
-              document.getElementById('error-type').textContent = event.error?.constructor?.name || 'Unknown';
-              document.getElementById('error-file').textContent = event.filename || 'User JavaScript';
-              document.getElementById('preview-error-overlay').style.display = 'flex';
-              
-              console.error('🚨 Preview Engine caught error:', event.error || event.message);
-            });
+            // EARLY ERROR CAPTURE - set up before anything else
+            window.__previewEarlyErrors = [];
+            window.__previewErrorHandlerLoaded = false;
             
-            // Catch unhandled promise rejections
-            window.addEventListener('unhandledrejection', function(event) {
-              event.preventDefault();
-              
-              const errorDetails = \`
-Promise Rejection: \${event.reason?.message || event.reason || 'Unknown'}
-Type: Promise Rejection
-Stack Trace:
-\${event.reason?.stack || 'No stack trace available'}
-              \`.trim();
-              
-              document.getElementById('error-details').textContent = errorDetails;
-              document.getElementById('error-type').textContent = 'Promise Rejection';
-              document.getElementById('error-file').textContent = 'Async Operation';
-              document.getElementById('preview-error-overlay').style.display = 'flex';
-              
-              console.error('🚨 Preview Engine caught promise rejection:', event.reason);
-            });
-            
-            // Execute user's JavaScript with try-catch wrapper
-            (function() {
-              const userCode = \`${appData.js || '// No JavaScript provided'}\`;
-              
-              if (!userCode.trim()) {
-                console.log('📝 No JavaScript code provided by user');
-                return;
+            // Early error handler (catches errors before main handler loads)
+            window.addEventListener('error', function earlyErrorHandler(event) {
+              if (!window.__previewErrorHandlerLoaded) {
+                const errorDetails = {
+                  message: event.message || 'Unknown error',
+                  filename: event.filename || 'Unknown',
+                  lineno: event.lineno || 'Unknown',
+                  colno: event.colno || 'Unknown'
+                };
+                window.__previewEarlyErrors.push(errorDetails);
+                console.log('📝 Early error captured:', errorDetails);
               }
+              // Don't prevent default - let it also go to console
+            });
+            
+            // MAIN ERROR HANDLING SYSTEM
+            document.addEventListener('DOMContentLoaded', function() {
+              // Mark that main handler is now loaded
+              window.__previewErrorHandlerLoaded = true;
               
-              console.log('🚀 Executing user JavaScript...');
-              
-              try {
-                // Create a function from the user's code
-                const userFunction = new Function(userCode);
-                
-                // Execute on next tick to ensure DOM is ready
-                setTimeout(() => {
-                  try {
-                    userFunction();
-                    console.log('✅ User JavaScript executed successfully');
-                  } catch (execError) {
-                    // This will be caught by the global error handler
-                    throw execError;
-                  }
-                }, 0);
-                
-              } catch (syntaxError) {
-                // Handle syntax errors (they happen during Function creation)
+              // Show any early errors
+              if (window.__previewEarlyErrors.length > 0) {
+                const firstError = window.__previewEarlyErrors[0];
                 const errorDetails = \`
-Syntax Error: \${syntaxError.message}
-Type: SyntaxError
-File: User JavaScript
-Line: Unable to determine (syntax error during parsing)
-Column: Unable to determine
+Early Error: \${firstError.message}
+File: \${firstError.filename}
+Line: \${firstError.lineno}, Column: \${firstError.colno}
 
-Problematic Code Snippet:
-\${userCode.substring(Math.max(0, syntaxError.position - 50), Math.min(userCode.length, syntaxError.position + 50))}
-
-Full User Code:
-\${userCode}
+Note: This error occurred before the page fully loaded.
                 \`.trim();
                 
                 document.getElementById('error-details').textContent = errorDetails;
-                document.getElementById('error-type').textContent = 'SyntaxError';
-                document.getElementById('error-file').textContent = 'User JavaScript';
+                document.getElementById('error-type').textContent = 'Early Load Error';
+                document.getElementById('error-file').textContent = firstError.filename || 'Unknown';
+                document.getElementById('preview-error-overlay').style.display = 'flex';
+                console.log('🚨 Showing early error in overlay');
+              }
+              
+              // Global error handler for runtime errors
+              window.addEventListener('error', function mainErrorHandler(event) {
+                event.preventDefault();
+                
+                const errorDetails = \`
+Error: \${event.error?.message || event.message || 'Unknown error'}
+Type: \${event.error?.constructor?.name || 'RuntimeError'}
+File: \${event.filename || 'Inline Script'}
+Line: \${event.lineno || 'N/A'}, Column: \${event.colno || 'N/A'}
+Stack Trace:
+\${event.error?.stack || 'No stack trace available'}
+
+Timestamp: \${new Date().toISOString()}
+                \`.trim();
+                
+                document.getElementById('error-details').textContent = errorDetails;
+                document.getElementById('error-type').textContent = event.error?.constructor?.name || 'RuntimeError';
+                document.getElementById('error-file').textContent = event.filename || 'Inline Script';
                 document.getElementById('preview-error-overlay').style.display = 'flex';
                 
-                console.error('🚨 Syntax error in user code:', syntaxError);
+                console.error('🚨 Preview Engine caught error:', event.error || event.message);
+                
+                // Return true to prevent default browser error handling
+                return true;
+              });
+              
+              // Catch unhandled promise rejections
+              window.addEventListener('unhandledrejection', function(event) {
+                event.preventDefault();
+                
+                const errorDetails = \`
+Promise Rejection: \${event.reason?.message || event.reason || 'Unknown promise rejection'}
+Type: Promise Rejection
+Stack Trace:
+\${event.reason?.stack || 'No stack trace available'}
+
+Timestamp: \${new Date().toISOString()}
+                \`.trim();
+                
+                document.getElementById('error-details').textContent = errorDetails;
+                document.getElementById('error-type').textContent = 'Promise Rejection';
+                document.getElementById('error-file').textContent = 'Async Operation';
+                document.getElementById('preview-error-overlay').style.display = 'flex';
+                
+                console.error('🚨 Preview Engine caught promise rejection:', event.reason);
+                
+                return true;
+              });
+              
+              // EXECUTE USER'S JAVASCRIPT
+              console.log('🚀 Executing user JavaScript...');
+              
+              const userCode = \`${appData.js || '// No JavaScript provided'}\`;
+              
+              if (!userCode.trim() || userCode.trim() === '// No JavaScript provided') {
+                console.log('📝 No user JavaScript to execute');
+                return;
               }
-            })();
-            
-            // CSS Error handling (for dynamically added styles)
-            const styleSheet = document.getElementById('user-css');
-            if (styleSheet && styleSheet.sheet) {
+              
               try {
-                // This will throw if there are CSS syntax errors
-                const rules = styleSheet.sheet.cssRules || styleSheet.sheet.rules;
-                console.log(\`✅ CSS loaded with \${rules?.length || 0} rules\`);
-              } catch (cssError) {
-                console.warn('⚠️ Potential CSS syntax error:', cssError);
-                // CSS errors are non-blocking, so we just log them
+                // Wrap user code in a function and execute immediately
+                const userFunction = new Function(userCode);
+                
+                // Execute synchronously (errors will be caught by our handler)
+                userFunction();
+                
+                console.log('✅ User JavaScript executed successfully');
+              } catch (execError) {
+                // This will be caught by the global error handler above
+                console.error('❌ Error executing user JavaScript:', execError);
+                // Re-throw to be caught by global handler
+                throw execError;
               }
+            });
+            
+            // Fallback: If DOMContentLoaded already fired, run immediately
+            if (document.readyState === 'interactive' || document.readyState === 'complete') {
+              // Trigger our error handling setup
+              const event = new Event('DOMContentLoaded');
+              document.dispatchEvent(event);
             }
           </script>
         </body>
