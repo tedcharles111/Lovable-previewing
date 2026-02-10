@@ -57,50 +57,81 @@ export class AppManager {
           <!-- FAVICON FIX -->
           <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🚀</text></svg>">
           
-          <!-- AUTO-LOAD JQUERY TO PREVENT $ ERRORS -->
-          <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+          <!-- ULTRA-EARLY JQUERY LOADING - CRITICAL FIX -->
           <script>
-            // Fallback if jQuery fails
-            if (typeof window.$ === 'undefined') {
-              console.warn('JQuery failed to load, creating mock $');
-              window.$ = window.jQuery = function(selector) {
-                return document.querySelector(selector);
+            // Load jQuery IMMEDIATELY to prevent early $ errors
+            (function() {
+              console.log('🔄 Loading jQuery for preview...');
+              var jqScript = document.createElement('script');
+              jqScript.src = 'https://code.jquery.com/jquery-3.7.1.min.js';
+              jqScript.integrity = 'sha256-/JqT3SQfawRcv/BIHPThkBvs0OEvtFFmqPF/lYI/Cxo=';
+              jqScript.crossOrigin = 'anonymous';
+              
+              jqScript.onload = function() {
+                console.log('✅ jQuery loaded successfully');
+                // Ensure $ and jQuery are available globally
+                window.$ = window.jQuery = jQuery.noConflict(true);
+                console.log('✅ jQuery ready, $ defined:', typeof window.$);
               };
-            }
+              
+              jqScript.onerror = function() {
+                console.warn('⚠️ jQuery failed to load, creating fallback');
+                window.$ = window.jQuery = function(selector) {
+                  console.warn('Using jQuery fallback for selector:', selector);
+                  if (typeof selector === 'string') {
+                    return document.querySelector(selector);
+                  } else if (typeof selector === 'function') {
+                    // Handle $(document).ready()
+                    if (document.readyState !== 'loading') {
+                      selector();
+                    } else {
+                      document.addEventListener('DOMContentLoaded', selector);
+                    }
+                  }
+                  return selector;
+                };
+                window.$.ajax = function() {
+                  console.warn('jQuery.ajax is not available in fallback mode');
+                };
+              };
+              
+              // Insert jQuery FIRST before any other scripts
+              document.head.insertBefore(jqScript, document.head.firstChild);
+            })();
           </script>
           
           ${supabaseInjection}
           
           <!-- USER'S CSS -->
-          <style>${appData.css || ''}</style>
-          
-          <!-- ERROR DISPLAY STYLES -->
           <style>
-            .preview-error-overlay {
+            /* Base styles to prevent white screen */
+            body {
+              margin: 0;
+              min-height: 100vh;
+              font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+              background-color: #f5f5f5;
+            }
+            
+            /* Error display that shows immediately */
+            #preview-engine-error {
+              display: none;
               position: fixed;
               top: 0;
               left: 0;
               right: 0;
               bottom: 0;
-              background: rgba(0, 0, 0, 0.85);
+              background: white;
               z-index: 10000;
-              display: none;
-              justify-content: center;
-              align-items: center;
+              padding: 40px;
+              overflow-y: auto;
               font-family: -apple-system, BlinkMacSystemFont, sans-serif;
             }
             
-            .preview-error-container {
-              background: white;
-              border-radius: 12px;
-              padding: 30px;
-              max-width: 800px;
-              max-height: 80vh;
-              overflow-y: auto;
-              box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            #preview-engine-error.show {
+              display: block;
             }
             
-            .preview-error-header {
+            .error-header {
               color: #d93025;
               font-size: 24px;
               font-weight: bold;
@@ -110,7 +141,7 @@ export class AppManager {
               gap: 10px;
             }
             
-            .preview-error-content {
+            .error-content {
               background: #f8f9fa;
               border: 1px solid #dadce0;
               border-radius: 8px;
@@ -119,18 +150,17 @@ export class AppManager {
               font-family: 'Courier New', monospace;
               white-space: pre-wrap;
               word-break: break-word;
-              max-height: 300px;
+              max-height: 400px;
               overflow-y: auto;
             }
             
-            .preview-error-actions {
+            .error-actions {
               display: flex;
               gap: 10px;
-              justify-content: flex-end;
-              margin-top: 20px;
+              margin-top: 30px;
             }
             
-            .preview-error-button {
+            .error-button {
               padding: 10px 20px;
               border-radius: 6px;
               border: none;
@@ -139,21 +169,21 @@ export class AppManager {
               transition: background 0.2s;
             }
             
-            .preview-error-dismiss {
+            .error-dismiss {
               background: #1a73e8;
               color: white;
             }
             
-            .preview-error-dismiss:hover {
+            .error-dismiss:hover {
               background: #0d62d9;
             }
             
-            .preview-error-reload {
+            .error-reload {
               background: #f1f3f4;
               color: #3c4043;
             }
             
-            .preview-error-reload:hover {
+            .error-reload:hover {
               background: #e8eaed;
             }
             
@@ -169,45 +199,33 @@ export class AppManager {
               z-index: 9999;
             }
             
-            /* Fix for empty CSS */
-            body {
-              margin: 0;
-              min-height: 100vh;
-              font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            }
+            ${appData.css || ''}
           </style>
         </head>
         <body>
-          <!-- ERROR OVERLAY -->
-          <div id="preview-error-overlay" class="preview-error-overlay">
-            <div class="preview-error-container">
-              <div class="preview-error-header">
-                <span>⚠️</span>
-                <span>Preview Error</span>
-              </div>
-              <p>There was an error in the generated code. This helps the LLM understand what needs fixing:</p>
-              
-              <div class="preview-error-content" id="error-details">
-                <!-- Error details will appear here -->
-              </div>
-              
-              <p><strong>Error Type:</strong> <span id="error-type">Unknown</span></p>
-              <p><strong>Affected File:</strong> <span id="error-file">User JavaScript</span></p>
-              
-              <div class="preview-error-actions">
-                <button class="preview-error-button preview-error-dismiss" onclick="document.getElementById('preview-error-overlay').style.display='none'">
-                  Dismiss Error
-                </button>
-                <button class="preview-error-button preview-error-reload" onclick="window.location.reload()">
-                  Reload Preview
-                </button>
-              </div>
+          <!-- IMMEDIATE ERROR DISPLAY (Can show before DOM loads) -->
+          <div id="preview-engine-error">
+            <div class="error-header">
+              <span>⚠️</span>
+              <span>Preview JavaScript Error</span>
+            </div>
+            <p>This error helps the LLM understand what needs fixing:</p>
+            <div class="error-content" id="preview-error-details">
+              Loading error details...
+            </div>
+            <div class="error-actions">
+              <button class="error-button error-dismiss" onclick="document.getElementById('preview-engine-error').classList.remove('show')">
+                Dismiss Error
+              </button>
+              <button class="error-button error-reload" onclick="window.location.reload()">
+                Reload Preview
+              </button>
             </div>
           </div>
           
-          <!-- USER'S HTML -->
+          <!-- USER'S HTML (Will be inserted here) -->
           <div id="user-app-container">
-            ${appData.html || '<div style="padding: 40px; text-align: center; color: #666;"><p>No HTML content provided.</p></div>'}
+            ${appData.html || '<div style="padding:40px;text-align:center;color:#666"><p>Live Preview Loaded</p><p>If you see this, the HTML content is empty or being processed.</p></div>'}
           </div>
           
           <!-- WATERMARK -->
@@ -215,131 +233,193 @@ export class AppManager {
             Preview Engine | ${appData.id}
           </div>
           
-          <!-- ENHANCED ERROR HANDLING SCRIPT -->
+          <!-- MAIN ERROR HANDLING AND USER CODE EXECUTION -->
           <script>
-            // EARLY ERROR CAPTURE - set up before anything else
-            window.__previewEarlyErrors = [];
-            window.__previewErrorHandlerLoaded = false;
-            
-            // Early error handler (catches errors before main handler loads)
-            window.addEventListener('error', function earlyErrorHandler(event) {
-              if (!window.__previewErrorHandlerLoaded) {
-                const errorDetails = {
-                  message: event.message || 'Unknown error',
-                  filename: event.filename || 'Unknown',
-                  lineno: event.lineno || 'Unknown',
-                  colno: event.colno || 'Unknown'
-                };
-                window.__previewEarlyErrors.push(errorDetails);
-                console.log('📝 Early error captured:', errorDetails);
+            // CAPTURE ALL ERRORS - Setup immediately
+            (function() {
+              console.log('🔧 Setting up preview engine error handling...');
+              
+              // Collect early errors
+              window.__previewEarlyErrors = [];
+              
+              // Early error handler for errors before DOMContentLoaded
+              window.addEventListener('error', function earlyErrorHandler(event) {
+                // Don't handle errors from extensions or external scripts
+                if (!event.filename || event.filename.includes('lovable-previewing')) {
+                  window.__previewEarlyErrors.push({
+                    message: event.message || 'Unknown error',
+                    filename: event.filename || 'Inline script',
+                    lineno: event.lineno,
+                    colno: event.colno,
+                    error: event.error,
+                    timestamp: new Date().toISOString()
+                  });
+                  
+                  console.log('📝 Early error captured:', event.message);
+                  
+                  // Show error immediately if possible
+                  try {
+                    var errorDiv = document.getElementById('preview-engine-error');
+                    var detailsDiv = document.getElementById('preview-error-details');
+                    if (errorDiv && detailsDiv) {
+                      detailsDiv.textContent = 'Early Error: ' + event.message + '\\nFile: ' + (event.filename || 'Inline script') + '\\nLine: ' + event.lineno;
+                      errorDiv.classList.add('show');
+                    }
+                  } catch(e) {
+                    // Ignore DOM errors
+                  }
+                }
+              }, true); // Use capture phase to catch errors early
+              
+              // Wait for DOM to be ready
+              function onDomReady() {
+                console.log('🏁 DOM ready, executing user code...');
+                
+                // Show early errors if any
+                if (window.__previewEarlyErrors.length > 0) {
+                  var firstError = window.__previewEarlyErrors[0];
+                  var detailsDiv = document.getElementById('preview-error-details');
+                  if (detailsDiv) {
+                    detailsDiv.textContent = 'Early Error: ' + firstError.message + 
+                      '\\nFile: ' + firstError.filename + 
+                      '\\nLine: ' + firstError.lineno + ', Column: ' + firstError.colno + 
+                      '\\n\\nNote: This error occurred before the page fully loaded.';
+                  }
+                }
+                
+                // Main error handler for runtime errors
+                window.addEventListener('error', function mainErrorHandler(event) {
+                  event.preventDefault();
+                  
+                  var errorDetails = 'Error: ' + (event.error?.message || event.message) + 
+                    '\\nType: ' + (event.error?.constructor?.name || 'RuntimeError') + 
+                    '\\nFile: ' + (event.filename || 'User code') + 
+                    '\\nLine: ' + event.lineno + ', Column: ' + event.colno;
+                  
+                  if (event.error?.stack) {
+                    errorDetails += '\\n\\nStack Trace:\\n' + event.error.stack;
+                  }
+                  
+                  errorDetails += '\\n\\nTimestamp: ' + new Date().toISOString();
+                  
+                  var detailsDiv = document.getElementById('preview-error-details');
+                  if (detailsDiv) {
+                    detailsDiv.textContent = errorDetails;
+                    document.getElementById('preview-engine-error').classList.add('show');
+                  }
+                  
+                  console.error('🚨 Preview Engine caught error:', event.error || event.message);
+                  return true;
+                });
+                
+                // Catch unhandled promise rejections
+                window.addEventListener('unhandledrejection', function(event) {
+                  event.preventDefault();
+                  
+                  var errorDetails = 'Promise Rejection: ' + (event.reason?.message || event.reason || 'Unknown') + 
+                    '\\nType: Promise Rejection';
+                  
+                  if (event.reason?.stack) {
+                    errorDetails += '\\n\\nStack Trace:\\n' + event.reason.stack;
+                  }
+                  
+                  errorDetails += '\\n\\nTimestamp: ' + new Date().toISOString();
+                  
+                  var detailsDiv = document.getElementById('preview-error-details');
+                  if (detailsDiv) {
+                    detailsDiv.textContent = errorDetails;
+                    document.getElementById('preview-engine-error').classList.add('show');
+                  }
+                  
+                  console.error('🚨 Unhandled promise rejection:', event.reason);
+                  return true;
+                });
+                
+                // EXECUTE USER'S JAVASCRIPT
+                console.log('🚀 Executing user JavaScript...');
+                
+                var userCode = \`${appData.js || ''}\`.trim();
+                
+                if (!userCode) {
+                  console.log('📝 No user JavaScript provided');
+                  return;
+                }
+                
+                // Check if jQuery is available for user code
+                if (!window.$) {
+                  console.warn('⚠️ jQuery ($) is not available for user code');
+                  // Create a minimal fallback if not already done
+                  window.$ = window.jQuery = function(selector) {
+                    if (typeof selector === 'string') {
+                      return document.querySelector(selector);
+                    } else if (typeof selector === 'function') {
+                      if (document.readyState === 'loading') {
+                        document.addEventListener('DOMContentLoaded', selector);
+                      } else {
+                        selector();
+                      }
+                    }
+                    return selector;
+                  };
+                }
+                
+                try {
+                  // Create a safe execution environment for user code
+                  var userFunction = new Function(
+                    'window',
+                    'document',
+                    '$',
+                    'jQuery',
+                    \`
+                    try {
+                      \${userCode}
+                    } catch(userError) {
+                      console.error('User code error:', userError);
+                      throw userError;
+                    }
+                    \`
+                  );
+                  
+                  // Execute with available jQuery
+                  userFunction(window, document, window.$, window.jQuery);
+                  console.log('✅ User JavaScript executed successfully');
+                  
+                } catch (execError) {
+                  console.error('❌ Error executing user JavaScript:', execError);
+                  // The error will be caught by our main error handler
+                  throw execError;
+                }
               }
-              // Don't prevent default - let it also go to console
-            });
-            
-            // MAIN ERROR HANDLING SYSTEM
-            document.addEventListener('DOMContentLoaded', function() {
-              // Mark that main handler is now loaded
-              window.__previewErrorHandlerLoaded = true;
               
-              // Show any early errors
-              if (window.__previewEarlyErrors.length > 0) {
-                const firstError = window.__previewEarlyErrors[0];
-                const errorDetails = \`
-Early Error: \${firstError.message}
-File: \${firstError.filename}
-Line: \${firstError.lineno}, Column: \${firstError.colno}
-
-Note: This error occurred before the page fully loaded.
-                \`.trim();
+              // Wait for jQuery to load or timeout
+              function waitForJQuery(callback) {
+                var attempts = 0;
+                var maxAttempts = 50; // 5 seconds
                 
-                document.getElementById('error-details').textContent = errorDetails;
-                document.getElementById('error-type').textContent = 'Early Load Error';
-                document.getElementById('error-file').textContent = firstError.filename || 'Unknown';
-                document.getElementById('preview-error-overlay').style.display = 'flex';
-                console.log('🚨 Showing early error in overlay');
+                function check() {
+                  if (window.jQuery && window.$) {
+                    callback();
+                  } else if (attempts < maxAttempts) {
+                    attempts++;
+                    setTimeout(check, 100);
+                  } else {
+                    console.warn('⚠️ jQuery not loaded after timeout, proceeding anyway');
+                    callback();
+                  }
+                }
+                
+                check();
               }
               
-              // Global error handler for runtime errors
-              window.addEventListener('error', function mainErrorHandler(event) {
-                event.preventDefault();
-                
-                const errorDetails = \`
-Error: \${event.error?.message || event.message || 'Unknown error'}
-Type: \${event.error?.constructor?.name || 'RuntimeError'}
-File: \${event.filename || 'Inline Script'}
-Line: \${event.lineno || 'N/A'}, Column: \${event.colno || 'N/A'}
-Stack Trace:
-\${event.error?.stack || 'No stack trace available'}
-
-Timestamp: \${new Date().toISOString()}
-                \`.trim();
-                
-                document.getElementById('error-details').textContent = errorDetails;
-                document.getElementById('error-type').textContent = event.error?.constructor?.name || 'RuntimeError';
-                document.getElementById('error-file').textContent = event.filename || 'Inline Script';
-                document.getElementById('preview-error-overlay').style.display = 'flex';
-                
-                console.error('🚨 Preview Engine caught error:', event.error || event.message);
-                
-                // Return true to prevent default browser error handling
-                return true;
-              });
-              
-              // Catch unhandled promise rejections
-              window.addEventListener('unhandledrejection', function(event) {
-                event.preventDefault();
-                
-                const errorDetails = \`
-Promise Rejection: \${event.reason?.message || event.reason || 'Unknown promise rejection'}
-Type: Promise Rejection
-Stack Trace:
-\${event.reason?.stack || 'No stack trace available'}
-
-Timestamp: \${new Date().toISOString()}
-                \`.trim();
-                
-                document.getElementById('error-details').textContent = errorDetails;
-                document.getElementById('error-type').textContent = 'Promise Rejection';
-                document.getElementById('error-file').textContent = 'Async Operation';
-                document.getElementById('preview-error-overlay').style.display = 'flex';
-                
-                console.error('🚨 Preview Engine caught promise rejection:', event.reason);
-                
-                return true;
-              });
-              
-              // EXECUTE USER'S JAVASCRIPT
-              console.log('🚀 Executing user JavaScript...');
-              
-              const userCode = \`${appData.js || '// No JavaScript provided'}\`;
-              
-              if (!userCode.trim() || userCode.trim() === '// No JavaScript provided') {
-                console.log('📝 No user JavaScript to execute');
-                return;
+              // Start when DOM is ready
+              if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', function() {
+                  waitForJQuery(onDomReady);
+                });
+              } else {
+                waitForJQuery(onDomReady);
               }
-              
-              try {
-                // Wrap user code in a function and execute immediately
-                const userFunction = new Function(userCode);
-                
-                // Execute synchronously (errors will be caught by our handler)
-                userFunction();
-                
-                console.log('✅ User JavaScript executed successfully');
-              } catch (execError) {
-                // This will be caught by the global error handler above
-                console.error('❌ Error executing user JavaScript:', execError);
-                // Re-throw to be caught by global handler
-                throw execError;
-              }
-            });
-            
-            // Fallback: If DOMContentLoaded already fired, run immediately
-            if (document.readyState === 'interactive' || document.readyState === 'complete') {
-              // Trigger our error handling setup
-              const event = new Event('DOMContentLoaded');
-              document.dispatchEvent(event);
-            }
+            })();
           </script>
         </body>
         </html>
