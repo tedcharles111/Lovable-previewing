@@ -24,25 +24,127 @@ export class AppManager {
 
     const app = express();
 
-    app.get('/', (req, res) => {
-      // ---------- SUPABASE (ES module, global) ----------
-      const supabaseInjection = this.supabaseUrl
-        ? `
-        <script type="importmap">
-          {
-            "imports": {
-              "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@2"
+    // ---------- Serve the static preview processor script ----------
+    app.get('/preview-processor.js', (req, res) => {
+      res.setHeader('Content-Type', 'application/javascript');
+      res.send(`
+        // Preview Processor – runs in the browser
+        window.showError = (msg, type = 'Error', file = '', line = '', stack = '') => {
+          const errorBadge = document.getElementById('error-badge');
+          const errorCorner = document.getElementById('error-corner');
+          const errorMsg = document.getElementById('error-message');
+          let count = parseInt(document.getElementById('error-count').textContent || '0') + 1;
+          document.getElementById('error-count').textContent = count;
+          let details = \`\${type}: \${msg}\`;
+          if (file) details += \`\\nFile: \${file}\`;
+          if (line) details += \`\\nLine: \${line}\`;
+          if (stack) details += \`\\n\\n\${stack}\`;
+          errorMsg.textContent = details;
+          errorBadge.style.display = 'flex';
+          errorCorner.style.display = 'none';
+        };
+
+        async function processPreview() {
+          // Read user data from JSON script
+          const dataElement = document.getElementById('preview-data');
+          if (!dataElement) return;
+          const userData = JSON.parse(dataElement.textContent);
+          const { html, js, supabaseUrl, supabaseAnonKey } = userData;
+
+          // 1. Insert cleaned HTML (no script tags)
+          const container = document.getElementById('user-app-root');
+          container.innerHTML = html;
+
+          // 2. Setup Supabase if configured
+          if (supabaseUrl && supabaseAnonKey) {
+            const { createClient } = await import('https://esm.sh/@supabase/supabase-js@2');
+            window.supabase = createClient(supabaseUrl, supabaseAnonKey);
+            console.log('🔗 Supabase ready');
+          }
+
+          // 3. Wait for esbuild
+          while (!window.__esbuild) await new Promise(r => setTimeout(r, 50));
+          const esbuild = window.__esbuild;
+
+          // 4. Collect all scripts from the user's HTML (inline and external)
+          const allScripts = [];
+          
+          // Find all script tags in the container (they were not executed because they were inserted via innerHTML)
+          const scriptTags = container.querySelectorAll('script');
+          scriptTags.forEach(script => {
+            const src = script.getAttribute('src');
+            const code = script.textContent;
+            script.remove(); // remove from DOM, we'll compile and inject
+            allScripts.push({ src, code });
+          });
+
+          // Add the user's JS field as an additional script
+          if (js && js.trim()) {
+            allScripts.push({ src: null, code: js });
+          }
+
+          // 5. Process each script
+          for (const { src, code } of allScripts) {
+            try {
+              let codeToCompile = code;
+              
+              // Fetch external script if src exists
+              if (src) {
+                try {
+                  const response = await fetch(src);
+                  if (!response.ok) throw new Error(\`HTTP \${response.status}\`);
+                  codeToCompile = await response.text();
+                } catch (fetchErr) {
+                  window.showError(\`Failed to fetch \${src}: \${fetchErr.message}\`, 'FetchError');
+                  continue;
+                }
+              }
+
+              if (!codeToCompile || !codeToCompile.trim()) continue;
+
+              // Determine loader
+              let loader = 'js';
+              if (src?.includes('.tsx')) loader = 'tsx';
+              else if (src?.includes('.ts')) loader = 'ts';
+              else if (src?.includes('.jsx')) loader = 'jsx';
+              else if (codeToCompile.includes('React') || codeToCompile.includes('jsx')) loader = 'tsx';
+
+              const result = await esbuild.transform(codeToCompile, {
+                loader,
+                jsx: 'automatic',
+                target: 'es2020',
+                format: 'esm',
+              });
+
+              const scriptEl = document.createElement('script');
+              scriptEl.type = 'module';
+              scriptEl.textContent = result.code;
+              document.body.appendChild(scriptEl);
+            } catch (err) {
+              window.showError(err.message, 'CompilationError', src || 'inline');
             }
           }
-        </script>
-        <script type="module">
-          import { createClient } from '@supabase/supabase-js';
-          window.supabase = createClient('${this.supabaseUrl}', '${this.supabaseAnonKey}');
-          console.log('🔗 Supabase ready');
-        </script>`
-        : '';
+        }
 
-      // ---------- THE ULTIMATE PREVIEW ENGINE – ZERO RAW EXECUTION ----------
+        // Start when DOM ready
+        if (document.readyState === 'loading') {
+          document.addEventListener('DOMContentLoaded', processPreview);
+        } else {
+          processPreview();
+        }
+      `);
+    });
+
+    app.get('/', (req, res) => {
+      // Prepare user data as JSON – safe from injection
+      const userData = {
+        html: appData.html || '',
+        js: appData.js || '',
+        supabaseUrl: this.supabaseUrl || null,
+        supabaseAnonKey: this.supabaseAnonKey || null,
+      };
+
+      // ---------- MAIN HTML PAGE ----------
       res.send(`
         <!DOCTYPE html>
         <html>
@@ -51,12 +153,11 @@ export class AppManager {
           <meta name="viewport" content="width=device-width, initial-scale=1.0">
           <title>${appData.id} – Live Preview</title>
           
-          <!-- Favicon (kills 404) -->
+          <!-- Favicon -->
           <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🚀</text></svg>">
           
-          <!-- ========== JQUERY – SYNCHRONOUS, ALWAYS READY ========== -->
+          <!-- ========== JQUERY – ALWAYS READY ========== -->
           <script>
-            // Define $ immediately, then load real jQuery
             window.$ = window.jQuery = function(selector) {
               if (typeof selector === 'function') {
                 if (document.readyState !== 'loading') selector();
@@ -64,31 +165,26 @@ export class AppManager {
                 return window;
               }
               return document.querySelector(selector) || {
-                ready: function(f) { f?.(); return this; },
-                on: function() { return this; },
-                click: function() { return this; },
-                css: function() { return this; },
-                html: function() { return this; }
+                ready: f => { f?.(); return this; },
+                on: () => this,
+                click: () => this,
+                css: () => this,
+                html: () => this
               };
             };
-            console.log('💡 $ placeholder active');
           </script>
-          <script src="https://code.jquery.com/jquery-3.7.1.min.js" onload="console.log('✅ jQuery loaded'); window.$ = window.jQuery = jQuery.noConflict(true);"></script>
-          <!-- ======================================================== -->
+          <script src="https://code.jquery.com/jquery-3.7.1.min.js" onload="window.$ = window.jQuery = jQuery.noConflict(true); console.log('✅ jQuery loaded');"></script>
           
-          ${supabaseInjection}
-          
-          <!-- ========== ESBUILD COMPILER – RELIABLE CDN ========== -->
+          <!-- ========== ESBUILD COMPILER ========== -->
           <script>
-            window.__PREVIEW_COMPILER = null;
+            window.__esbuild = null;
             (async function() {
               try {
-                // Use the official esbuild-wasm browser build from unpkg
                 const esbuild = await import('https://unpkg.com/esbuild-wasm@0.20.2/esm/browser.js');
                 await esbuild.initialize({
                   wasmURL: 'https://unpkg.com/esbuild-wasm@0.20.2/esbuild.wasm'
                 });
-                window.__PREVIEW_COMPILER = esbuild;
+                window.__esbuild = esbuild;
                 console.log('✅ esbuild compiler ready');
               } catch (e) {
                 console.error('❌ esbuild init failed:', e);
@@ -96,7 +192,7 @@ export class AppManager {
             })();
           </script>
           
-          <!-- ========== IMPORT MAP FOR REACT (only if not present) ========== -->
+          <!-- ========== IMPORT MAP (React) ========== -->
           <script type="importmap">
             {
               "imports": {
@@ -107,13 +203,12 @@ export class AppManager {
             }
           </script>
           
-          <!-- USER CSS – EXACTLY AS GIVEN -->
+          <!-- ========== USER CSS ========== -->
           <style>${appData.css || ''}</style>
           
-          <!-- ========== ERROR CORNER – NEVER BLOCKS ========== -->
+          <!-- ========== ERROR UI STYLES ========== -->
           <style>
             body { margin: 0; padding: 0; min-height: 100vh; background: white; }
-            #error-badge, #error-corner { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
             #error-badge {
               position: fixed; bottom: 20px; right: 20px;
               background: #d93025; color: white;
@@ -154,14 +249,17 @@ export class AppManager {
           </style>
         </head>
         <body>
-          <!-- ========== COMPILATION & RENDERING ENGINE ========== -->
+          <!-- ========== USER DATA – SAFE JSON ========== -->
+          <script id="preview-data" type="application/json">${JSON.stringify(userData)}</script>
+          
+          <!-- ========== USER APP CONTAINER ========== -->
           <div id="user-app-root"></div>
           
-          <!-- WATERMARK -->
+          <!-- ========== WATERMARK ========== -->
           <div class="preview-watermark">Preview Engine | ${appData.id}</div>
           
           <!-- ========== ERROR UI ========== -->
-          <button id="error-badge" style="display: none;"><span>⚠️</span> <span id="error-count">1</span> error</button>
+          <button id="error-badge" style="display: none;"><span>⚠️</span> <span id="error-count">0</span> errors</button>
           <div id="error-corner">
             <div class="inner">
               <div class="header"><span>⚠️</span> <span>Preview Error</span></div>
@@ -173,127 +271,28 @@ export class AppManager {
             </div>
           </div>
           
-          <!-- ========== MAIN BOOTSTRAP SCRIPT ========== -->
-          <script type="module">
-            // ----- ERROR HANDLER (non‑blocking) -----
-            let errorCount = 0;
-            const errorBadge = document.getElementById('error-badge');
-            const errorCorner = document.getElementById('error-corner');
-            const errorMsg = document.getElementById('error-message');
-            window.showError = (msg, type = 'Error', file = '', line = '', stack = '') => {
-              errorCount++;
-              document.getElementById('error-count').textContent = errorCount;
-              let details = \`\${type}: \${msg}\`;
-              if (file) details += \`\\nFile: \${file}\`;
-              if (line) details += \`\\nLine: \${line}\`;
-              if (stack) details += \`\\n\\n\${stack}\`;
-              errorMsg.textContent = details;
-              errorBadge.style.display = 'flex';
-              errorCorner.style.display = 'none';
-            };
-            errorBadge.addEventListener('click', () => {
-              errorBadge.style.display = 'none';
-              errorCorner.style.display = 'block';
-            });
+          <!-- ========== GLOBAL ERROR HANDLER ========== -->
+          <script>
             window.addEventListener('error', (e) => {
               e.preventDefault();
               const err = e.error || { message: e.message };
-              showError(err.message, err.constructor?.name || 'Error', e.filename, e.lineno ? \`\${e.lineno}:\${e.colno}\` : '', err.stack);
+              if (window.showError) {
+                window.showError(err.message, err.constructor?.name || 'Error', e.filename, e.lineno ? \`\${e.lineno}:\${e.colno}\` : '', err.stack);
+              }
               return true;
             });
             window.addEventListener('unhandledrejection', (e) => {
               e.preventDefault();
               const reason = e.reason || {};
-              showError(reason.message || String(reason), 'UnhandledRejection', '', '', reason.stack);
+              if (window.showError) {
+                window.showError(reason.message || String(reason), 'UnhandledRejection', '', '', reason.stack);
+              }
               return true;
             });
-
-            // ----- PARSE USER HTML, EXTRACT SCRIPTS, COMPILE & INJECT -----
-            (async function() {
-              const userHTML = ${JSON.stringify(appData.html || '')};
-              const userJS = ${JSON.stringify(appData.js || '')};
-              
-              // 1. Parse the HTML string using DOMParser (does not execute scripts)
-              const parser = new DOMParser();
-              const doc = parser.parseFromString(userHTML, 'text/html');
-              
-              // 2. Extract all script tags (both inline and external)
-              const scriptElements = Array.from(doc.querySelectorAll('script'));
-              const scripts = [];
-              
-              for (const script of scriptElements) {
-                const src = script.getAttribute('src');
-                const type = script.getAttribute('type');
-                const code = script.textContent;
-                
-                // Remove script from the document
-                script.remove();
-                
-                scripts.push({ src, type, code });
-              }
-              
-              // 3. Add the user's JS field as an additional script
-              if (userJS.trim()) {
-                scripts.push({ src: null, type: null, code: userJS });
-              }
-              
-              // 4. Clean HTML (remove any remaining script tags from the parsed body)
-              const bodyContent = doc.body.innerHTML;
-              
-              // 5. Insert the cleaned HTML into the DOM
-              document.getElementById('user-app-root').innerHTML = bodyContent;
-              
-              // 6. Wait for esbuild compiler
-              while (!window.__PREVIEW_COMPILER) {
-                await new Promise(r => setTimeout(r, 50));
-              }
-              const esbuild = window.__PREVIEW_COMPILER;
-              
-              // 7. Process each script
-              for (const script of scripts) {
-                try {
-                  let codeToCompile = script.code;
-                  
-                  // Fetch external script if src exists
-                  if (script.src) {
-                    try {
-                      const response = await fetch(script.src);
-                      codeToCompile = await response.text();
-                    } catch (fetchErr) {
-                      showError(\`Failed to fetch \${script.src}: \${fetchErr.message}\`, 'FetchError');
-                      continue;
-                    }
-                  }
-                  
-                  if (!codeToCompile || !codeToCompile.trim()) continue;
-                  
-                  // Determine loader based on content or file extension
-                  let loader = 'js';
-                  if (script.src?.includes('.tsx')) loader = 'tsx';
-                  else if (script.src?.includes('.ts')) loader = 'ts';
-                  else if (script.src?.includes('.jsx')) loader = 'jsx';
-                  else if (codeToCompile.includes('React') || codeToCompile.includes('jsx')) loader = 'tsx';
-                  
-                  // Compile with esbuild
-                  const result = await esbuild.transform(codeToCompile, {
-                    loader: loader,
-                    jsx: 'automatic',
-                    target: 'es2020',
-                    format: 'esm',
-                  });
-                  
-                  // Inject compiled script as module
-                  const newScript = document.createElement('script');
-                  newScript.type = 'module';
-                  newScript.textContent = result.code;
-                  document.body.appendChild(newScript);
-                  
-                } catch (err) {
-                  showError(err.message, 'CompilationError', script.src || 'inline script');
-                }
-              }
-            })();
           </script>
+          
+          <!-- ========== PREVIEW PROCESSOR ========== -->
+          <script src="/preview-processor.js"></script>
         </body>
         </html>
       `);
