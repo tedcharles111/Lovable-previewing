@@ -25,9 +25,9 @@ export class AppManager {
     const app = express();
 
     app.get('/', (req, res) => {
+      // ---------- SUPABASE (ES module, global) ----------
       const supabaseInjection = this.supabaseUrl
         ? `
-        <!-- Supabase client (ES module) -->
         <script type="importmap">
           {
             "imports": {
@@ -42,7 +42,7 @@ export class AppManager {
         </script>`
         : '';
 
-      // ---------- ULTIMATE PREVIEW ENGINE – INTERCEPTS & COMPILES EVERYTHING ----------
+      // ---------- THE ULTIMATE PREVIEW ENGINE – ZERO RAW EXECUTION ----------
       res.send(`
         <!DOCTYPE html>
         <html>
@@ -55,22 +55,36 @@ export class AppManager {
           <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🚀</text></svg>">
           
           <!-- ========== JQUERY – SYNCHRONOUS, ALWAYS READY ========== -->
-          <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
           <script>
-            if (typeof jQuery === 'undefined') {
-              window.$ = window.jQuery = (s) => ({ ready: (f) => f?.() });
-              console.warn('⚠️ jQuery fallback');
-            } else {
-              console.log('✅ jQuery loaded');
-            }
+            // Define $ immediately, then load real jQuery
+            window.$ = window.jQuery = function(selector) {
+              if (typeof selector === 'function') {
+                if (document.readyState !== 'loading') selector();
+                else document.addEventListener('DOMContentLoaded', selector);
+                return window;
+              }
+              return document.querySelector(selector) || {
+                ready: function(f) { f?.(); return this; },
+                on: function() { return this; },
+                click: function() { return this; },
+                css: function() { return this; },
+                html: function() { return this; }
+              };
+            };
+            console.log('💡 $ placeholder active');
           </script>
+          <script src="https://code.jquery.com/jquery-3.7.1.min.js" onload="console.log('✅ jQuery loaded'); window.$ = window.jQuery = jQuery.noConflict(true);"></script>
+          <!-- ======================================================== -->
           
-          <!-- ========== ESBUILD COMPILER – LOADED ONCE ========== -->
+          ${supabaseInjection}
+          
+          <!-- ========== ESBUILD COMPILER – RELIABLE CDN ========== -->
           <script>
             window.__PREVIEW_COMPILER = null;
-            (async function loadEsbuild() {
+            (async function() {
               try {
-                const esbuild = await import('https://esm.sh/esbuild-wasm@0.20.2?bundle');
+                // Use the official esbuild-wasm browser build from unpkg
+                const esbuild = await import('https://unpkg.com/esbuild-wasm@0.20.2/esm/browser.js');
                 await esbuild.initialize({
                   wasmURL: 'https://unpkg.com/esbuild-wasm@0.20.2/esbuild.wasm'
                 });
@@ -82,7 +96,7 @@ export class AppManager {
             })();
           </script>
           
-          <!-- ========== IMPORT MAP FOR REACT (PRE‑CONFIGURED) ========== -->
+          <!-- ========== IMPORT MAP FOR REACT (only if not present) ========== -->
           <script type="importmap">
             {
               "imports": {
@@ -92,8 +106,6 @@ export class AppManager {
               }
             }
           </script>
-          
-          ${supabaseInjection}
           
           <!-- USER CSS – EXACTLY AS GIVEN -->
           <style>${appData.css || ''}</style>
@@ -142,8 +154,8 @@ export class AppManager {
           </style>
         </head>
         <body>
-          <!-- USER'S HTML – WILL BE POPULATED WITH INTERCEPTED SCRIPTS -->
-          <div id="user-app-root">${appData.html || '<div style="padding:40px;text-align:center;color:#666;">✨ Preview ready</div>'}</div>
+          <!-- ========== COMPILATION & RENDERING ENGINE ========== -->
+          <div id="user-app-root"></div>
           
           <!-- WATERMARK -->
           <div class="preview-watermark">Preview Engine | ${appData.id}</div>
@@ -161,7 +173,7 @@ export class AppManager {
             </div>
           </div>
           
-          <!-- ========== SCRIPT INTERCEPTOR & COMPILER ========== -->
+          <!-- ========== MAIN BOOTSTRAP SCRIPT ========== -->
           <script type="module">
             // ----- ERROR HANDLER (non‑blocking) -----
             let errorCount = 0;
@@ -196,117 +208,89 @@ export class AppManager {
               return true;
             });
 
-            // ----- SCRIPT QUEUE – INTERCEPT ALL SCRIPTS INSIDE USER-APP-ROOT -----
-            const scriptQueue = [];
-            const observer = new MutationObserver((mutations) => {
-              mutations.forEach(mut => {
-                mut.addedNodes.forEach(node => {
-                  if (node.tagName === 'SCRIPT' && node.parentElement?.id === 'user-app-root') {
-                    // Intercept script tag
-                    const src = node.src;
-                    const type = node.type;
-                    const code = node.textContent;
-                    
-                    // Prevent execution by removing or changing type
-                    node.type = 'text/plain'; // disables execution
-                    
-                    scriptQueue.push({ src, type, code, element: node });
-                  }
-                });
-              });
-            });
-            
-            // Start observing
-            const root = document.getElementById('user-app-root');
-            observer.observe(root, { childList: true, subtree: true });
-            
-            // Also catch scripts already in the HTML
-            root.querySelectorAll('script').forEach(node => {
-              if (!node.src && node.type !== 'module' && node.type !== 'importmap') {
-                const src = node.src;
-                const type = node.type;
-                const code = node.textContent;
-                node.type = 'text/plain';
-                scriptQueue.push({ src, type, code, element: node });
+            // ----- PARSE USER HTML, EXTRACT SCRIPTS, COMPILE & INJECT -----
+            (async function() {
+              const userHTML = ${JSON.stringify(appData.html || '')};
+              const userJS = ${JSON.stringify(appData.js || '')};
+              
+              // 1. Parse the HTML string using DOMParser (does not execute scripts)
+              const parser = new DOMParser();
+              const doc = parser.parseFromString(userHTML, 'text/html');
+              
+              // 2. Extract all script tags (both inline and external)
+              const scriptElements = Array.from(doc.querySelectorAll('script'));
+              const scripts = [];
+              
+              for (const script of scriptElements) {
+                const src = script.getAttribute('src');
+                const type = script.getAttribute('type');
+                const code = script.textContent;
+                
+                // Remove script from the document
+                script.remove();
+                
+                scripts.push({ src, type, code });
               }
-            });
-
-            // ----- WAIT FOR ESBUILD, THEN COMPILE & EXECUTE -----
-            async function processScripts() {
+              
+              // 3. Add the user's JS field as an additional script
+              if (userJS.trim()) {
+                scripts.push({ src: null, type: null, code: userJS });
+              }
+              
+              // 4. Clean HTML (remove any remaining script tags from the parsed body)
+              const bodyContent = doc.body.innerHTML;
+              
+              // 5. Insert the cleaned HTML into the DOM
+              document.getElementById('user-app-root').innerHTML = bodyContent;
+              
+              // 6. Wait for esbuild compiler
+              while (!window.__PREVIEW_COMPILER) {
+                await new Promise(r => setTimeout(r, 50));
+              }
               const esbuild = window.__PREVIEW_COMPILER;
-              if (!esbuild) {
-                // If esbuild not ready, wait and retry
-                setTimeout(processScripts, 100);
-                return;
-              }
-
-              for (const item of scriptQueue) {
+              
+              // 7. Process each script
+              for (const script of scripts) {
                 try {
-                  let codeToCompile = item.code;
+                  let codeToCompile = script.code;
                   
-                  // If it's an external script, fetch it
-                  if (item.src && !item.src.startsWith('data:')) {
+                  // Fetch external script if src exists
+                  if (script.src) {
                     try {
-                      const response = await fetch(item.src);
+                      const response = await fetch(script.src);
                       codeToCompile = await response.text();
                     } catch (fetchErr) {
-                      showError(\`Failed to fetch \${item.src}: \${fetchErr.message}\`, 'FetchError');
+                      showError(\`Failed to fetch \${script.src}: \${fetchErr.message}\`, 'FetchError');
                       continue;
                     }
                   }
-
-                  if (!codeToCompile || codeToCompile.trim() === '') continue;
-
+                  
+                  if (!codeToCompile || !codeToCompile.trim()) continue;
+                  
+                  // Determine loader based on content or file extension
+                  let loader = 'js';
+                  if (script.src?.includes('.tsx')) loader = 'tsx';
+                  else if (script.src?.includes('.ts')) loader = 'ts';
+                  else if (script.src?.includes('.jsx')) loader = 'jsx';
+                  else if (codeToCompile.includes('React') || codeToCompile.includes('jsx')) loader = 'tsx';
+                  
                   // Compile with esbuild
                   const result = await esbuild.transform(codeToCompile, {
-                    loader: 'tsx',        // handles TSX, JSX, TS, JS
+                    loader: loader,
                     jsx: 'automatic',
                     target: 'es2020',
                     format: 'esm',
                   });
-
-                  // Inject as module script
-                  const script = document.createElement('script');
-                  script.type = 'module';
-                  script.textContent = result.code;
-                  document.body.appendChild(script);
+                  
+                  // Inject compiled script as module
+                  const newScript = document.createElement('script');
+                  newScript.type = 'module';
+                  newScript.textContent = result.code;
+                  document.body.appendChild(newScript);
                   
                 } catch (err) {
-                  showError(err.message, 'CompilationError', item.src || 'inline');
+                  showError(err.message, 'CompilationError', script.src || 'inline script');
                 }
-              }
-            }
-
-            // Start processing when compiler ready
-            (async function init() {
-              while (!window.__PREVIEW_COMPILER) await new Promise(r => setTimeout(r, 50));
-              await processScripts();
-            })();
-          </script>
-          
-          <!-- ========== USER'S ADDITIONAL JAVASCRIPT (js FIELD) ========== -->
-          <script type="module">
-            (async function() {
-              const esbuild = window.__PREVIEW_COMPILER;
-              const userCode = ${JSON.stringify(appData.js || '')};
-              if (!userCode.trim()) return;
-              
-              // Wait for compiler
-              while (!esbuild) await new Promise(r => setTimeout(r, 50));
-              
-              try {
-                const result = await esbuild.transform(userCode, {
-                  loader: 'tsx',
-                  jsx: 'automatic',
-                  target: 'es2020',
-                  format: 'esm',
-                });
-                const script = document.createElement('script');
-                script.type = 'module';
-                script.textContent = result.code;
-                document.body.appendChild(script);
-              } catch (err) {
-                showError(err.message, 'UserJSCompilationError');
               }
             })();
           </script>
