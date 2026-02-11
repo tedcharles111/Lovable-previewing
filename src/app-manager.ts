@@ -25,22 +25,24 @@ export class AppManager {
     const app = express();
 
     app.get('/', (req, res) => {
-      // ---------- SUPABASE (only if configured) ----------
       const supabaseInjection = this.supabaseUrl
         ? `
-        <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
-        <script>
-          try {
-            window.supabase = supabase.createClient(
-              '${this.supabaseUrl}',
-              '${this.supabaseAnonKey}'
-            );
-            console.log('🔗 Supabase ready');
-          } catch (e) { console.error(e); }
+        <!-- Supabase client (ES module) -->
+        <script type="importmap">
+          {
+            "imports": {
+              "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@2"
+            }
+          }
+        </script>
+        <script type="module">
+          import { createClient } from '@supabase/supabase-js';
+          window.supabase = createClient('${this.supabaseUrl}', '${this.supabaseAnonKey}');
+          console.log('🔗 Supabase ready');
         </script>`
         : '';
 
-      // ---------- PREVIEW ENGINE – ULTRA FORGIVING, SELF‑COMPILING ----------
+      // ---------- ULTIMATE PREVIEW ENGINE – INTERCEPTS & COMPILES EVERYTHING ----------
       res.send(`
         <!DOCTYPE html>
         <html>
@@ -49,50 +51,54 @@ export class AppManager {
           <meta name="viewport" content="width=device-width, initial-scale=1.0">
           <title>${appData.id} – Live Preview</title>
           
-          <!-- FAVICON (kills 404) -->
+          <!-- Favicon (kills 404) -->
           <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🚀</text></svg>">
           
           <!-- ========== JQUERY – SYNCHRONOUS, ALWAYS READY ========== -->
           <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
           <script>
             if (typeof jQuery === 'undefined') {
-              window.$ = window.jQuery = function(s) { return { ready: function(f) { f?.(); } }; };
+              window.$ = window.jQuery = (s) => ({ ready: (f) => f?.() });
               console.warn('⚠️ jQuery fallback');
             } else {
               console.log('✅ jQuery loaded');
             }
           </script>
-          <!-- ======================================================== -->
           
-          ${supabaseInjection}
-          
-          <!-- ========== COMPILER CORE – ESBUILD (LOADED ONCE) ========== -->
+          <!-- ========== ESBUILD COMPILER – LOADED ONCE ========== -->
           <script>
-            window.__PREVIEW_COMPILER_READY = false;
-            (function loadEsbuild() {
-              const script = document.createElement('script');
-              script.src = 'https://cdn.jsdelivr.net/npm/esbuild-wasm@0.20.2/esm/browser.js';
-              script.type = 'module';
-              script.onload = async () => {
-                try {
-                  const esbuild = await import('https://cdn.jsdelivr.net/npm/esbuild-wasm@0.20.2/esm/browser.js');
-                  await esbuild.initialize({ wasmURL: 'https://cdn.jsdelivr.net/npm/esbuild-wasm@0.20.2/esbuild.wasm' });
-                  window.__esbuild = esbuild;
-                  window.__PREVIEW_COMPILER_READY = true;
-                  console.log('✅ esbuild compiler ready – can compile TSX/JSX/TS');
-                } catch (e) {
-                  console.error('❌ esbuild init failed:', e);
-                }
-              };
-              document.head.appendChild(script);
+            window.__PREVIEW_COMPILER = null;
+            (async function loadEsbuild() {
+              try {
+                const esbuild = await import('https://esm.sh/esbuild-wasm@0.20.2?bundle');
+                await esbuild.initialize({
+                  wasmURL: 'https://unpkg.com/esbuild-wasm@0.20.2/esbuild.wasm'
+                });
+                window.__PREVIEW_COMPILER = esbuild;
+                console.log('✅ esbuild compiler ready');
+              } catch (e) {
+                console.error('❌ esbuild init failed:', e);
+              }
             })();
           </script>
-          <!-- =========================================================== -->
+          
+          <!-- ========== IMPORT MAP FOR REACT (PRE‑CONFIGURED) ========== -->
+          <script type="importmap">
+            {
+              "imports": {
+                "react": "https://esm.sh/react@18.2.0",
+                "react-dom": "https://esm.sh/react-dom@18.2.0/client",
+                "react/jsx-runtime": "https://esm.sh/react@18.2.0/jsx-runtime"
+              }
+            }
+          </script>
+          
+          ${supabaseInjection}
           
           <!-- USER CSS – EXACTLY AS GIVEN -->
           <style>${appData.css || ''}</style>
           
-          <!-- ========== ERROR CORNER – NEVER BLOCKS, ALWAYS POLITE ========== -->
+          <!-- ========== ERROR CORNER – NEVER BLOCKS ========== -->
           <style>
             body { margin: 0; padding: 0; min-height: 100vh; background: white; }
             #error-badge, #error-corner { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
@@ -136,15 +142,13 @@ export class AppManager {
           </style>
         </head>
         <body>
-          <!-- USER HTML – EXACT, UNTOUCHED -->
-          <div id="user-app-root">
-            ${appData.html || '<div style="padding:40px;text-align:center;color:#666;">✨ Preview ready</div>'}
-          </div>
+          <!-- USER'S HTML – WILL BE POPULATED WITH INTERCEPTED SCRIPTS -->
+          <div id="user-app-root">${appData.html || '<div style="padding:40px;text-align:center;color:#666;">✨ Preview ready</div>'}</div>
           
           <!-- WATERMARK -->
           <div class="preview-watermark">Preview Engine | ${appData.id}</div>
           
-          <!-- ========== SILENT ERROR UI ========== -->
+          <!-- ========== ERROR UI ========== -->
           <button id="error-badge" style="display: none;"><span>⚠️</span> <span id="error-count">1</span> error</button>
           <div id="error-corner">
             <div class="inner">
@@ -157,13 +161,14 @@ export class AppManager {
             </div>
           </div>
           
-          <script>
-            // ---------- GLOBAL ERROR CATCHER – NEVER INTERRUPTS ----------
+          <!-- ========== SCRIPT INTERCEPTOR & COMPILER ========== -->
+          <script type="module">
+            // ----- ERROR HANDLER (non‑blocking) -----
             let errorCount = 0;
             const errorBadge = document.getElementById('error-badge');
             const errorCorner = document.getElementById('error-corner');
             const errorMsg = document.getElementById('error-message');
-            function showError(msg, type = 'Error', file = '', line = '', stack = '') {
+            window.showError = (msg, type = 'Error', file = '', line = '', stack = '') => {
               errorCount++;
               document.getElementById('error-count').textContent = errorCount;
               let details = \`\${type}: \${msg}\`;
@@ -173,94 +178,137 @@ export class AppManager {
               errorMsg.textContent = details;
               errorBadge.style.display = 'flex';
               errorCorner.style.display = 'none';
-            }
+            };
             errorBadge.addEventListener('click', () => {
               errorBadge.style.display = 'none';
               errorCorner.style.display = 'block';
             });
-            window.addEventListener('error', function(e) {
+            window.addEventListener('error', (e) => {
               e.preventDefault();
               const err = e.error || { message: e.message };
               showError(err.message, err.constructor?.name || 'Error', e.filename, e.lineno ? \`\${e.lineno}:\${e.colno}\` : '', err.stack);
               return true;
             });
-            window.addEventListener('unhandledrejection', function(e) {
+            window.addEventListener('unhandledrejection', (e) => {
               e.preventDefault();
               const reason = e.reason || {};
               showError(reason.message || String(reason), 'UnhandledRejection', '', '', reason.stack);
               return true;
             });
-          </script>
-          
-          <!-- ========== SMART COMPILER & RUNTIME INJECTOR ========== -->
-          <script type="module">
-            // 1. Detect if React/JSX is used – inject React, ReactDOM
-            const needsReact = 
-              ${JSON.stringify(appData.html || '')}.includes('React') || 
-              ${JSON.stringify(appData.js || '')}.includes('React') ||
-              /<\\w+\\s*\\/?>|\\/\\s*<|\\/>/.test(${JSON.stringify(appData.html || '')}) ||
-              /import.*from\\s+['"]react['"]/.test(${JSON.stringify(appData.js || '')});
-            
-            if (needsReact) {
-              console.log('⚛️ React detected – loading React and ReactDOM');
-              await Promise.all([
-                import('https://esm.sh/react@18.2.0'),
-                import('https://esm.sh/react-dom@18.2.0/client')
-              ]).then(([React, ReactDOMClient]) => {
-                window.React = React;
-                window.ReactDOM = { createRoot: ReactDOMClient.createRoot };
-                console.log('✅ React 18 ready');
-              }).catch(e => showError('React load failed: ' + e.message, 'DependencyError'));
-            }
-            
-            // 2. Find all script tags (inline and external) that need compilation
-            const scriptsToCompile = [];
-            document.querySelectorAll('script[type="text/babel"], script:not([src]):not([type])').forEach(el => {
-              if (el.textContent.includes('React') || el.textContent.includes('jsx') || el.textContent.includes('tsx')) {
-                scriptsToCompile.push(el.textContent);
-                el.remove(); // remove original, we'll inject compiled version
-              }
+
+            // ----- SCRIPT QUEUE – INTERCEPT ALL SCRIPTS INSIDE USER-APP-ROOT -----
+            const scriptQueue = [];
+            const observer = new MutationObserver((mutations) => {
+              mutations.forEach(mut => {
+                mut.addedNodes.forEach(node => {
+                  if (node.tagName === 'SCRIPT' && node.parentElement?.id === 'user-app-root') {
+                    // Intercept script tag
+                    const src = node.src;
+                    const type = node.type;
+                    const code = node.textContent;
+                    
+                    // Prevent execution by removing or changing type
+                    node.type = 'text/plain'; // disables execution
+                    
+                    scriptQueue.push({ src, type, code, element: node });
+                  }
+                });
+              });
             });
             
-            // 3. If there is user JS in the appData.js, add it to the compilation queue
-            if (${JSON.stringify(appData.js || '')}.trim()) {
-              scriptsToCompile.push(${JSON.stringify(appData.js || '')});
-            }
+            // Start observing
+            const root = document.getElementById('user-app-root');
+            observer.observe(root, { childList: true, subtree: true });
             
-            // 4. Compile everything with esbuild (if compiler ready, otherwise fallback)
-            if (scriptsToCompile.length > 0 && window.__PREVIEW_COMPILER_READY) {
-              const esbuild = window.__esbuild;
-              const compilePromises = scriptsToCompile.map(code =>
-                esbuild.transform(code, {
-                  loader: 'tsx',   // handles TSX, JSX, TS, JS
-                  jsx: 'automatic',
-                  target: 'es2020',
-                  format: 'esm',
-                }).catch(err => {
-                  showError(err.message, 'CompilationError');
-                  return null;
-                })
-              );
-              
-              const results = await Promise.all(compilePromises);
-              results.forEach(result => {
-                if (result && result.code) {
+            // Also catch scripts already in the HTML
+            root.querySelectorAll('script').forEach(node => {
+              if (!node.src && node.type !== 'module' && node.type !== 'importmap') {
+                const src = node.src;
+                const type = node.type;
+                const code = node.textContent;
+                node.type = 'text/plain';
+                scriptQueue.push({ src, type, code, element: node });
+              }
+            });
+
+            // ----- WAIT FOR ESBUILD, THEN COMPILE & EXECUTE -----
+            async function processScripts() {
+              const esbuild = window.__PREVIEW_COMPILER;
+              if (!esbuild) {
+                // If esbuild not ready, wait and retry
+                setTimeout(processScripts, 100);
+                return;
+              }
+
+              for (const item of scriptQueue) {
+                try {
+                  let codeToCompile = item.code;
+                  
+                  // If it's an external script, fetch it
+                  if (item.src && !item.src.startsWith('data:')) {
+                    try {
+                      const response = await fetch(item.src);
+                      codeToCompile = await response.text();
+                    } catch (fetchErr) {
+                      showError(\`Failed to fetch \${item.src}: \${fetchErr.message}\`, 'FetchError');
+                      continue;
+                    }
+                  }
+
+                  if (!codeToCompile || codeToCompile.trim() === '') continue;
+
+                  // Compile with esbuild
+                  const result = await esbuild.transform(codeToCompile, {
+                    loader: 'tsx',        // handles TSX, JSX, TS, JS
+                    jsx: 'automatic',
+                    target: 'es2020',
+                    format: 'esm',
+                  });
+
+                  // Inject as module script
                   const script = document.createElement('script');
                   script.type = 'module';
                   script.textContent = result.code;
                   document.body.appendChild(script);
+                  
+                } catch (err) {
+                  showError(err.message, 'CompilationError', item.src || 'inline');
                 }
-              });
-            } else if (scriptsToCompile.length > 0) {
-              console.warn('⚠️ esbuild not ready – executing raw code (may fail)');
-              scriptsToCompile.forEach(code => {
-                try {
-                  eval(code); // last resort
-                } catch (e) {
-                  showError(e.message, 'RawEvalError');
-                }
-              });
+              }
             }
+
+            // Start processing when compiler ready
+            (async function init() {
+              while (!window.__PREVIEW_COMPILER) await new Promise(r => setTimeout(r, 50));
+              await processScripts();
+            })();
+          </script>
+          
+          <!-- ========== USER'S ADDITIONAL JAVASCRIPT (js FIELD) ========== -->
+          <script type="module">
+            (async function() {
+              const esbuild = window.__PREVIEW_COMPILER;
+              const userCode = ${JSON.stringify(appData.js || '')};
+              if (!userCode.trim()) return;
+              
+              // Wait for compiler
+              while (!esbuild) await new Promise(r => setTimeout(r, 50));
+              
+              try {
+                const result = await esbuild.transform(userCode, {
+                  loader: 'tsx',
+                  jsx: 'automatic',
+                  target: 'es2020',
+                  format: 'esm',
+                });
+                const script = document.createElement('script');
+                script.type = 'module';
+                script.textContent = result.code;
+                document.body.appendChild(script);
+              } catch (err) {
+                showError(err.message, 'UserJSCompilationError');
+              }
+            })();
           </script>
         </body>
         </html>
