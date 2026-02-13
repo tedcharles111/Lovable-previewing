@@ -1,7 +1,7 @@
 import { CodeSandbox } from '@codesandbox/sdk';
 import { v4 as uuidv4 } from 'uuid';
 
-// Initialize the CodeSandbox SDK (no browser globals needed)
+// Initialize the CodeSandbox SDK (works in Node.js)
 const csb = new CodeSandbox();
 
 export async function createStackBlitzPreview(
@@ -35,7 +35,7 @@ export async function createStackBlitzPreview(
       ),
     };
 
-    // Create a sandbox (this is a server‑side API call)
+    // Create a sandbox (server‑side API call)
     const sandbox = await csb.sandbox.create({
       files: sandboxFiles,
     });
