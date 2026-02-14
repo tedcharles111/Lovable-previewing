@@ -35,8 +35,8 @@ export async function createStackBlitzPreview(
       ),
     };
 
-    // Create a sandbox (server‑side API call)
-    const sandbox = await csb.sandbox.create({
+    // ✅ FIXED: Use .sandboxes.create() instead of .sandbox.create()
+    const sandbox = await csb.sandboxes.create({
       files: sandboxFiles,
     });
 
