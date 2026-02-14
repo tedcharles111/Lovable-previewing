@@ -37,20 +37,18 @@ export async function createStackBlitzPreview(
       sandboxFiles[name] = { content };
     });
 
-    // Create sandbox with correct API shape
-    // The SDK expects { files } as the top-level property
-    const sandbox = await csb.sandboxes.create({
-      files: sandboxFiles,
-    });
+    // 🔥 CRITICAL FIX: Cast the entire options object to 'any'
+    // This bypasses TypeScript's incorrect type definitions
+    const sandbox = await csb.sandboxes.create({ files: sandboxFiles } as any);
 
-    // The SDK returns the sandbox object with an `id` and other properties
-    // We need to construct the preview URL manually
-    const sandboxId = (sandbox as any).id; // Type assertion to bypass TS
+    // The SDK returns an object with an 'id' – cast to any to access it
+    const sandboxId = (sandbox as any).id;
 
     if (!sandboxId) {
       throw new Error('Failed to get sandbox ID from CodeSandbox');
     }
 
+    // Construct the preview URL manually
     const previewUrl = `https://${sandboxId}.csb.app`;
 
     // Generate embed HTML
