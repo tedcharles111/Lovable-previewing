@@ -7,10 +7,7 @@
     "dev": "nodemon src/server.ts"
   },
   "dependencies": {
-<<<<<<< HEAD
-=======
     "@codesandbox/sdk": "^2.4.2",
->>>>>>> b7eca520b25b714782e8fcb6d6de22100ee03731
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
